@@ -6,7 +6,7 @@ require 'rake/testtask'
 begin
   require 'jeweler'
   Jeweler::Tasks.new do |s|
-    s.name = "memcache-client"
+    s.name = "dsander-memcache-client"
     s.summary = s.description = "A Ruby library for accessing memcached."
     s.email = "mperham@gmail.com"
     s.homepage = "http://github.com/mperham/memcache-client"

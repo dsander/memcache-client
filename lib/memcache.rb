@@ -5,6 +5,7 @@ require 'thread'
 require 'zlib'
 require 'digest/sha1'
 require 'net/protocol'
+require 'yaml'
 
 begin
   # Try to use the SystemTimer gem instead of Ruby's timeout library
@@ -37,7 +38,7 @@ class MemCache
 
   VERSION = begin
     config = YAML.load(File.read(File.dirname(__FILE__) + '/../VERSION.yml'))
-    "#{config[:major]}.#{config[:minor]}.#{config[:patch]}"
+    "#{config[:major]}.#{config[:minor]}.#{config[:patch]}" + (config[:build] ? ".#{config[:build]}" : '')
   end
 
   ##
@@ -53,6 +54,7 @@ class MemCache
     :no_reply     => false,
     :check_size   => true,
     :autofix_keys => false,
+    :gzip         => true,
     :namespace_separator => ':',
   }
 
@@ -118,6 +120,10 @@ class MemCache
   attr_reader :no_reply
 
   ##
+  # Compress the data before sending it to memcached (slower but can save a lot of ram)
+  attr_reader :gzip
+  
+  ##
   # Accepts a list of +servers+ and a list of +opts+.  +servers+ may be
   # omitted.  See +servers=+ for acceptable server list arguments.
   #
@@ -170,6 +176,7 @@ class MemCache
     @logger       = opts[:logger]
     @no_reply     = opts[:no_reply]
     @check_size   = opts[:check_size]
+    @gzip         = opts[:gzip]
     @namespace_separator = opts[:namespace_separator]
     @mutex        = Mutex.new if @multithread
 
@@ -201,7 +208,28 @@ class MemCache
   def readonly?
     @readonly
   end
-
+  
+  ##
+  # Returns the compressed value
+  
+  def compress(value)
+    if @gzip
+      Zlib::Deflate.deflate(value)
+    else
+      value
+    end
+  end
+  
+  ##
+  # Return the decompressed data
+  
+  def decompress(value)
+    if @gzip
+      Zlib::Inflate.inflate(value)
+    else
+      value
+    end
+  end
   ##
   # Set the servers that the requests will be distributed between.  Entries
   # can be either strings of the form "hostname:port" or
@@ -252,7 +280,7 @@ class MemCache
       logger.debug { "get #{key} from #{server.inspect}" } if logger
       value = cache_get server, cache_key
       return nil if value.nil?
-      value = Marshal.load value unless raw
+      value = Marshal.load decompress(value) unless raw
       return value
     end
   rescue TypeError => err
@@ -318,7 +346,7 @@ class MemCache
       begin
         values = cache_get_multi server, keys_for_server_str
         values.each do |key, value|
-          results[cache_keys[key]] = Marshal.load value
+          results[cache_keys[key]] = Marshal.load decompress(value)
         end
       rescue IndexError => e
         # Ignore this server and try the others
@@ -357,7 +385,7 @@ class MemCache
   def set(key, value, expiry = 0, raw = false)
     raise MemCacheError, "Update of readonly cache" if @readonly
 
-    value = Marshal.dump value unless raw
+    value = compress(Marshal.dump value) unless raw
     with_server(key) do |server, cache_key|
       logger.debug { "set #{key} to #{server.inspect}: #{value.to_s.size}" } if logger
 
@@ -405,7 +433,7 @@ class MemCache
     (value, token) = gets(key, raw)
     return nil unless value
     updated = yield value
-    value = Marshal.dump updated unless raw
+    value = compress(Marshal.dump updated) unless raw
 
     with_server(key) do |server, cache_key|
       logger.debug { "cas #{key} to #{server.inspect}: #{value.to_s.size}" } if logger
@@ -437,7 +465,7 @@ class MemCache
 
   def add(key, value, expiry = 0, raw = false)
     raise MemCacheError, "Update of readonly cache" if @readonly
-    value = Marshal.dump value unless raw
+    value = compress(Marshal.dump value) unless raw
     with_server(key) do |server, cache_key|
       logger.debug { "add #{key} to #{server}: #{value ? value.to_s.size : 'nil'}" } if logger
       command = "add #{cache_key} 0 #{expiry} #{value.to_s.size}#{noreply}\r\n#{value}\r\n"
@@ -458,7 +486,7 @@ class MemCache
   # If +raw+ is true, +value+ will not be Marshalled.
   def replace(key, value, expiry = 0, raw = false)
     raise MemCacheError, "Update of readonly cache" if @readonly
-    value = Marshal.dump value unless raw
+    value = compress(Marshal.dump value) unless raw
     with_server(key) do |server, cache_key|
       logger.debug { "replace #{key} to #{server}: #{value ? value.to_s.size : 'nil'}" } if logger
       command = "replace #{cache_key} 0 #{expiry} #{value.to_s.size}#{noreply}\r\n#{value}\r\n"
@@ -775,7 +803,7 @@ class MemCache
         socket.gets   # "END\r\n"
         [value, $2]
       end
-      result[0] = Marshal.load result[0] unless raw
+      result[0] = Marshal.load decompress(result[0]) unless raw
       result
     end
   rescue TypeError => err

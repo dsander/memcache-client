@@ -5,7 +5,7 @@ $LOAD_PATH.unshift "#{HERE}/../lib"
 require 'benchmark'
 require 'rubygems'
 require 'test/unit'
-
+require 'yaml'
 $TESTING = true
 require 'memcache' if not defined?(MemCache)
 

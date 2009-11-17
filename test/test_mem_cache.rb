@@ -3,6 +3,7 @@ require 'logger'
 require 'stringio'
 require 'test/unit'
 require 'rubygems'
+
 begin
   gem 'flexmock'
   require 'flexmock/test_unit'
@@ -114,13 +115,13 @@ end
 class TestMemCache < Test::Unit::TestCase
 
   def setup
-    @cache = MemCache.new 'localhost:1', :namespace => 'my_namespace'
+    @cache = MemCache.new 'localhost:1', {:namespace => 'my_namespace', :gzip => false}
   end
 
   def test_performance
     requirement(memcached_running?, 'A real memcached server must be running for performance testing') do
 
-      cache = MemCache.new(['localhost:11211',"127.0.0.1:11211"])
+      cache = MemCache.new(['localhost:11211',"127.0.0.1:11211"], :gzip => false)
       cache.flush_all
       cache.add('a', 1, 120)
       with = xprofile 'get' do
@@ -131,7 +132,7 @@ class TestMemCache < Test::Unit::TestCase
       puts ''
       puts "1000 gets with socket timeout: #{with} sec"
 
-      cache = MemCache.new(['localhost:11211',"127.0.0.1:11211"], :timeout => nil)
+      cache = MemCache.new(['localhost:11211',"127.0.0.1:11211"], :timeout => nil, :gzip => false)
       cache.add('a', 1, 120)
       without = xprofile 'get' do
         1000.times do
@@ -170,7 +171,7 @@ class TestMemCache < Test::Unit::TestCase
   end
   
   def test_get_multi_with_server_failure
-    @cache = MemCache.new 'localhost:1', :namespace => 'my_namespace', :logger => nil #Logger.new(STDOUT)
+    @cache = MemCache.new 'localhost:1', :namespace => 'my_namespace', :gzip => false, :logger => nil #Logger.new(STDOUT)
     s1 = FakeServer.new
     s2 = FakeServer.new
 
@@ -192,7 +193,7 @@ class TestMemCache < Test::Unit::TestCase
   end
 
   def test_cache_get_with_failover
-    @cache = MemCache.new 'localhost:1', :namespace => 'my_namespace', :logger => nil#Logger.new(STDOUT)
+    @cache = MemCache.new 'localhost:1', :namespace => 'my_namespace', :gzip => false, :logger => nil#Logger.new(STDOUT)
     s1 = FakeServer.new
     s2 = FakeServer.new
 
@@ -337,7 +338,7 @@ class TestMemCache < Test::Unit::TestCase
     server = FakeServer.new
     server.multithread = false
     
-    @cache = MemCache.new(['localhost:1'], :multithread => false)
+    @cache = MemCache.new(['localhost:1'], :multithread => false, :gzip => false)
 
     server.socket.data.write "bogus response\r\nbogus response\r\n"
     server.socket.data.rewind
@@ -362,7 +363,7 @@ class TestMemCache < Test::Unit::TestCase
   end
 
   def test_initialize
-    cache = MemCache.new :namespace => 'my_namespace', :readonly => true
+    cache = MemCache.new :namespace => 'my_namespace', :readonly => true, :gzip => false
 
     assert_equal 'my_namespace', cache.namespace
     assert_equal true, cache.readonly?
@@ -475,6 +476,21 @@ class TestMemCache < Test::Unit::TestCase
                  @cache.servers.first.socket.written.string
 
     assert_equal '0123456789', value
+  end
+  
+  def test_gzip_get
+    # Ugly mix of basic tests
+    requirement(memcached_running?, 'A real memcached server must be running for gzip testing') do
+      cache = MemCache.new 'localhost'
+      cache.set("key", "value")
+      assert_equal 'value', cache.get("key")
+      
+      s = ''
+      1024.times { s << (i = Kernel.rand(62); i += ((i < 10) ? 48 : ((i < 36) ? 55 : 61 ))).chr }
+      s = s*1024
+      cache.set("key", s)
+      assert_equal s, cache.get("key")
+    end
   end
 
   def test_fetch_without_a_block
@@ -808,7 +824,7 @@ class TestMemCache < Test::Unit::TestCase
   end
 
   def test_check_size_on
-    cache = MemCache.new :check_size => true
+    cache = MemCache.new :check_size => true, :gzip => false
 
     server = FakeServer.new
     server.socket.data.write "STORED\r\n"
@@ -1080,7 +1096,8 @@ class TestMemCache < Test::Unit::TestCase
   def test_basic_threaded_operations_should_work
     cache = MemCache.new :multithread => true,
                          :namespace => 'my_namespace',
-                         :readonly => false
+                         :readonly => false,
+                         :gzip => false
 
     server = FakeServer.new
     server.socket.data.write "STORED\r\n"
@@ -1101,7 +1118,7 @@ class TestMemCache < Test::Unit::TestCase
   end
 
   def test_namespace_separator
-    cache = MemCache.new :namespace => 'ns', :namespace_separator => ''
+    cache = MemCache.new :namespace => 'ns', :namespace_separator => '', :gzip => false
 
     server = FakeServer.new
     server.socket.data.write "STORED\r\n"
@@ -1122,7 +1139,8 @@ class TestMemCache < Test::Unit::TestCase
   def test_basic_unthreaded_operations_should_work
     cache = MemCache.new :multithread => false,
                          :namespace => 'my_namespace',
-                         :readonly => false
+                         :readonly => false,
+                         :gzip => false
 
     server = FakeServer.new
     server.socket.data.write "STORED\r\n"
